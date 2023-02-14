@@ -1,12 +1,23 @@
-all:
-	g++ server.cpp -g -Wall -o server -std=c++11;
-	g++ subscriber.cpp -g -Wall -o subscriber -std=c++11;
+CFLAGS = -g -Wall
 
-server:
-	g++ server.cpp -g -Wall -o server -std=c++11;
+PORT_NR = 2550
+IP = 127.0.0.1
 
-subscriber:
-	g++ subscriber.cpp -g -Wall -o subscriber -std=c++11;
+all: server subscriber 
+
+server: server.cpp udp_types.o
+	g++ server.cpp udp_types.o -o server $(CFLAGS)
+
+subscriber: subscriber.cpp
+	g++ subscriber.cpp -o subscriber $(CFLAGS)
+	
+run_server:
+	./server ${PORT}
+
+run_client:
+	./subscriber ${ID_CLIENT} ${IP} ${PORT_NR}
+
+.PHONY: clean run_server run_client
 
 clean:
-	rm -rf subscriber server
+	rm -f server subscriber udp_types.o

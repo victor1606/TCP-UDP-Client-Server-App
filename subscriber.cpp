@@ -1,95 +1,106 @@
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <arpa/inet.h>
-#include <netdb.h>
-#include "helpers.h"
+#include "structures.h"
+#include "utils.h"
 
-void usage(char *file)
-{
-	fprintf(stderr, "Usage: %s id_client server_address server_port\n", file);
+using namespace std;
+
+void usage(char *file) {
+	fprintf(stderr, "Usage: %s client_id server_address server_port\n", file);
 	exit(0);
 }
 
-int main(int argc, char *argv[])
-{
-	int sockfd, n, ret;
-	struct sockaddr_in serv_addr;
-	char buffer[BUFLEN];
+int main(int argc, char *argv[]) {
+    if (argc != 4) {
+        usage(argv[0]);
+    }
 
-	if (argc < 4) {
-		usage(argv[0]);
-	}
+    int tcp_socket, n, ret;
+    struct sockaddr_in sv_addr;
+    char buffer[BUFLEN];
+    
+    setvbuf(stdout, NULL, _IONBF, BUFSIZ);
 
-	sockfd = socket(AF_INET, SOCK_STREAM, 0);
-	DIE(sockfd < 0, "invalid_socket");
+    tcp_socket = socket(AF_INET, SOCK_STREAM, 0);
+    DIE(tcp_socket < 0, "tcp socket failed to open");
 
-	serv_addr.sin_family = AF_INET;
-	serv_addr.sin_port = htons(atoi(argv[3]));
+    sv_addr.sin_family = AF_INET;
+    sv_addr.sin_port = htons(atoi(argv[3]));
+    ret = inet_aton(argv[2], &sv_addr.sin_addr);
+    DIE(ret == 0, "inet_aton failed");
 
-	ret = inet_aton(argv[2], &serv_addr.sin_addr);
-	DIE(ret == 0, "inet_aton failed");
+    ret = connect(tcp_socket, (struct sockaddr *)&sv_addr, sizeof(sv_addr));
+    DIE(ret < 0, "connect failed");
 
-	ret = connect(sockfd, (struct sockaddr*) &serv_addr, sizeof(serv_addr));
-	DIE(ret < 0, "connect failed");
+    ret = send(tcp_socket, argv[1], 256, 0);
+    DIE(ret == -1, "id send failed");
 
-	int fdmax = sockfd;
+    fd_set read_fd, temp_fd;
+    FD_ZERO(&read_fd);
+    FD_ZERO(&temp_fd);
 
-	while (1) {
-		fd_set read_set;
-		FD_SET(STDIN_FILENO, &read_set);
-		FD_SET(sockfd, &read_set);
+    while (1) {
+        temp_fd = read_fd;
+        FD_SET(tcp_socket, &read_fd);
+        FD_SET(STDIN_FILENO, &read_fd);
 
-		int rc = select(fdmax + 1, &read_set, NULL, NULL, NULL);
-		DIE(rc < 0, "select");
+        FD_SET(0, &temp_fd);
+        FD_SET(tcp_socket, &temp_fd);
 
-		if(FD_ISSET(STDIN_FILENO, &read_set)) {
-			// se citeste de la stdin
-			memset(buffer, 0, sizeof(buffer));
+        int rc = select(tcp_socket + 1, &temp_fd, NULL, NULL, NULL);
+        DIE(rc < 0, "select failed");
 
-			n = read(0, buffer, sizeof(buffer) - 1);
-			DIE(n < 0, "read invalid");
+        for (int i = 0; i < tcp_socket + 1; ++i) {
+            if (FD_ISSET(i, &temp_fd)) {
+                if (i == STDIN) {
+                    memset(buffer, 0, BUFLEN);
+                    ret = read(0, buffer, sizeof(buffer) - 1);
+			        DIE(ret < 0, "read invalid");
+                
+                    char cmd[BUFLEN];
+                    sscanf(buffer, "%s ", cmd);
 
-			if (strncmp(buffer, "subscribe", 9) == 0) {
-				ret = send(sockfd, buffer, strlen(buffer), 0);
-				DIE(ret < 0, "subscribe command failed");
-				printf("Subscribed to topic.\n");
-			}
+                    if (!strcmp(cmd, "exit")) {
+                        close(tcp_socket);
+                        return 0;
+                    }
 
-			if (strncmp(buffer, "unsubscribe", 11) == 0) {
-				ret = send(sockfd, buffer, strlen(buffer), 0);
-                DIE(ret < 0, "unsubscribe command failed");
-                printf("Unsubscribed from topic.\n");
-			}
+                    if (!strcmp(cmd, "subscribe")) {
+                        n = send(tcp_socket, buffer, strlen(buffer), 0);
+                        DIE(n < 0, "send (subscribe) failed");
+                        cout << "Subscribed to topic.\n";
+                    } else if (!strcmp(cmd, "unsubscribe")) {
+                        ret = send(tcp_socket, buffer, strlen(buffer), 0);
+                        DIE(ret < 0, "send (unsubscribe) failed");
+                        cout << "Unsubscribed from topic.\n";
+                    }
+                } else if (i == tcp_socket) {
+                    char buffer[BUFLEN];
+                    memset(buffer, 0, BUFLEN);
 
-			if (strncmp(buffer, "exit", 4) == 0) {
-				break;
-			}
+                    int received = recv(tcp_socket, buffer, sizeof(message), 0);
+                    DIE(received < 0, "receive failed");
 
-			// se trimite mesaj la server
-			n = send(sockfd, buffer, strlen(buffer), 0);
-			DIE(n < 0, "send");
-		} else {
-			// Socket
-			int rc = recv(sockfd, buffer, sizeof(buffer), 0);
-			DIE(rc < 0, "recv");
+                    if (received > 0) {
+                        for (int ct = received; ct < sizeof(message); ++ct) { // check if message is fully sent
+                            received = recv(tcp_socket, buffer + ct, sizeof(message) - ct, 0);
+                        }
 
-			if(rc == 0) {
-				printf("Connection closed\n");
-				break;
-			}
+                        message *msg = (message *)buffer;
+                        msg->topic[MAX_TOPIC] = '\0';
+                        
+                        string aux_udp_ip = msg->IP_UDP;
+                        string aux_udp_port = to_string(msg->udp_port);
+                        string aux = aux_udp_ip + ":" + aux_udp_port + " - " + msg->topic + " - " + 
+                                    msg->type + " - " + msg->message_value;
+                        cout << aux;
+                    } else if (received == 0) {
+                        close(tcp_socket);
+                        return 0;
+                    }
+                }
+            }
+        }
+    }
 
-			int wc = write(STDOUT_FILENO, buffer, rc);
-			DIE(wc < 0, "write failed");
-		}
-  		
-	}
-
-	close(sockfd);
-
-	return 0;
+    close(tcp_socket);
+    return 0;
 }

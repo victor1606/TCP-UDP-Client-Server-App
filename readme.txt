@@ -1,7 +1,6 @@
-# TCP-UDP-Client-Server-App
-The project follows the client-server model for TCP and UDP message management
+Calugaritoiu Ion-Victor 322CA
 
-Calugaritoiu Ion-Victor
+Protocoale de Comunicatii - Tema 2 
 
 Aplicatie client-server TCP si UDP pentru gestionarea mesajelor
 
